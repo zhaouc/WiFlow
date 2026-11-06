@@ -1,0 +1,65 @@
+name: WiFlow - Windows and Ubuntu packages
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-portable:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build Windows portable application
+        shell: pwsh
+        run: ./Windows/package-portable.ps1 -Runtime win-x64
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v6
+        with:
+          name: WiFlow-Windows-x64-Portable-1.0.0
+          path: |
+            Windows/dist/WiFlow-Windows-x64-Portable-1.0.0.zip
+            Windows/dist/WiFlow-Windows-x64-Portable-1.0.0.zip.sha256
+          if-no-files-found: error
+
+  ubuntu-deb:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install WebKitGTK and packaging prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-gi gir1.2-gtk-3.0 \
+            gir1.2-webkit2-4.1 libsecret-tools network-manager xvfb xauth
+      - name: Run unit tests
+        run: |
+          python3 -m compileall -q Ubuntu
+          cd Ubuntu && python3 -m unittest discover -v
+      - name: Package Ubuntu AMD64 and ARM64
+        run: |
+          python3 Ubuntu/package.py all
+          test "$(dpkg-deb -f Ubuntu/dist/wiflow_1.0.0_amd64.deb Architecture)" = amd64
+          test "$(dpkg-deb -f Ubuntu/dist/wiflow_1.0.0_arm64.deb Architecture)" = arm64
+          dpkg-deb --contents Ubuntu/dist/wiflow_1.0.0_arm64.deb | grep -F usr/bin/wiflow
+      - name: Smoke test HTML interface on AMD64
+        run: xvfb-run -a /usr/bin/python3 Ubuntu/web_main.py --smoke-test
+      - name: Test terminal entry and local HTTPS authentication
+        run: |
+          /usr/bin/python3 Ubuntu/cli.py --terminal --help
+          xvfb-run -a /usr/bin/python3 Ubuntu/verify_terminal_login.py
+      - name: Validate embedded desktop portal
+        run: xvfb-run -a /usr/bin/python3 Ubuntu/verify_embedded_portal.py
+      - name: Upload Ubuntu packages
+        uses: actions/upload-artifact@v6
+        with:
+          name: WiFlow-Ubuntu-AMD64-ARM64-1.0.0
+          path: Ubuntu/dist/*.deb
+          if-no-files-found: error
